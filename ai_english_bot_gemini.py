@@ -246,20 +246,32 @@ def system_instruction(level: str) -> str:
 """
 
 async def ask_gemini(prompt: str, level: str) -> str:
-    try:
-        response = await asyncio.to_thread(
-            ai_client.models.generate_content,
-            model='gemini-2.5-flash',
-            contents=prompt,
-            config={
-                'system_instruction': system_instruction(level),
-                'temperature': 0.3
-            }
-        )
-        return response.text if response.text else "⚠️ ИИ вернул пустой ответ. Повтори."
-    except Exception as e:
-        logger.error(f"Ошибка Gemini: {e}")
-        return "⚠️ Ошибка связи. Проверь GEMINI_API_KEY или попробуй позже."
+    # Делаем до 3 попыток, если упираемся в лимиты бесплатного API
+    for attempt in range(3):
+        try:
+            response = await asyncio.to_thread(
+                ai_client.models.generate_content,
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config={
+                    'system_instruction': system_instruction(level),
+                    'temperature': 0.3
+                }
+            )
+            return response.text if response.text else "⚠️ ИИ вернул пустой ответ. Повтори."
+            
+        except Exception as e:
+            logger.warning(f"Попытка {attempt + 1} провалилась. Ошибка Gemini: {e}")
+            
+            # Если это не последняя попытка, делаем паузу и пробуем снова
+            if attempt < 2:
+                await asyncio.sleep(4)  # Ждем 4 секунды, чтобы сбросился минутный лимит Google
+                continue
+                
+            # Если все 3 попытки сгорели, только тогда пишем об ошибке
+            logger.error(f"Финальная ошибка Gemini после 3 попыток: {e}")
+            return "⚠️ Ошибка связи. Проверь GEMINI_API_KEY или попробуй позже."
+
 
 # ============= КОМАНДЫ =============
 @dp.message(CommandStart())
