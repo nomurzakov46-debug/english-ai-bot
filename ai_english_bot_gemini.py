@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+from dotenv import load_dotenv
 import time
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
@@ -22,8 +23,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============= ТОКЕНЫ =============
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_TOKEN_HERE")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
+load_dotenv(dotenv_path="api.env")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -507,22 +509,19 @@ async def finalize_test(message: Message, state: FSMContext):
     )
 
 # ============= МОДУЛЬ СЛОВ =============
-@dp.message(F.text == "📚 Учить слова (50 в день)")
-async def mode_vocab(message: Message, state: FSMContext):
-    await state.clear()
-    await ensure_user(message.from_user.id)
-    await track_time(message.from_user.id)
 
+# 1. Выносим всю логику генерации слов в отдельную функцию, независимую от типов Message/CallbackQuery
+async def generate_and_send_vocab_block(user_id: int, target_chat_id: int, state: FSMContext, bot_or_message):
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
             "SELECT level, daily_words_count FROM users WHERE user_id = ?",
-            (message.from_user.id,)
+            (user_id,)
         ) as cursor:
             res = await cursor.fetchone()
     user_level, daily_count = res if res else ("A1", 0)
 
     if daily_count >= 50:
-        await message.answer(
+        await bot_or_message.answer(
             f"🎉 <b>Отличная работа!</b>\n\n"
             f"Ты уже выучил <u>50 слов</u> сегодня.\n"
             f"Новая порция откроется завтра! 😴",
@@ -531,7 +530,7 @@ async def mode_vocab(message: Message, state: FSMContext):
         return
 
     current_step = (daily_count // 10) + 1
-    msg = await message.answer(
+    msg = await bot_or_message.answer(
         f"🔄 <b>Генерирую слова...</b>\n\n"
         f"📚 Уровень: <u>{user_level}</u>\n"
         f"📍 Блок: {current_step}/5",
@@ -549,12 +548,25 @@ async def mode_vocab(message: Message, state: FSMContext):
     kb_confirm = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"✅ Выучил! ({current_step}/5)", callback_data="confirm_step")]
     ])
-    await message.answer(
+    await bot_or_message.answer(
         f"<b>📚 Блок {current_step} из 5</b>\n\n{ai_response}",
         reply_markup=kb_confirm,
         parse_mode="HTML"
     )
 
+
+# 2. Хендлер на кнопку из главного меню
+@dp.message(F.text == "📚 Учить слова (50 в день)")
+async def mode_vocab(message: Message, state: FSMContext):
+    await state.clear()
+    await ensure_user(message.from_user.id)
+    await track_time(message.from_user.id)
+    
+    # Просто вызываем нашу общую функцию
+    await generate_and_send_vocab_block(message.from_user.id, message.chat.id, state, message)
+
+
+# 3. Хендлер подтверждения шага
 @dp.callback_query(F.data == "confirm_step")
 async def process_confirm_step(callback: CallbackQuery):
     await ensure_user(callback.from_user.id)
@@ -597,13 +609,16 @@ async def process_confirm_step(callback: CallbackQuery):
         )
     await callback.answer()
 
+
+# 4. Хендлер переходов на следующий блок (ЗДЕСЬ БОЛЬШЕ НЕТ КОПИРОВАНИЯ ОБЪЕКТОВ)
 @dp.callback_query(F.data == "next_block")
 async def process_next_block(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
-    fake_message = callback.message
-    fake_message.from_user = callback.from_user
-    await mode_vocab(fake_message, state)
+    
+    # Прямо передаем ID пользователя из колбэка и сам объект callback для отправки сообщений
+    await generate_and_send_vocab_block(callback.from_user.id, callback.message.chat.id, state, callback)
     await callback.answer()
+
 
 # ============= РАЗГОВОРНЫЙ ЧАТ =============
 @dp.message(F.text == "💬 Разговор")
