@@ -251,7 +251,7 @@ async def ask_gemini(prompt: str, level: str) -> str:
         try:
             response = await asyncio.to_thread(
                 ai_client.models.generate_content,
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash', 
                 contents=prompt,
                 config={
                     'system_instruction': system_instruction(level),
