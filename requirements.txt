@@ -2,3 +2,5 @@ aiogram
 aiosqlite
 google-genai
 aiohttp
+python-dotenv
+
